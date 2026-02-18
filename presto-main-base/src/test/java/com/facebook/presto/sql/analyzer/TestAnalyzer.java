@@ -301,7 +301,11 @@ public class TestAnalyzer
     @Test
     public void testHavingReferencesOutputAlias()
     {
-        assertFails(MISSING_ATTRIBUTE, "SELECT sum(a) x FROM t1 HAVING x > 5");
+        // HAVING now support referencing SELECT aliases for improved SQL compatibility
+        analyze("SELECT sum(a) x FROM t1 HAVING x > 5");
+        analyze("SELECT sum(a) AS total FROM t1 GROUP BY b HAVING total > 10");
+        analyze("SELECT count(*) AS cnt, sum(a) AS total FROM t1 GROUP BY b HAVING cnt > 5 AND total > 100");
+        analyze("SELECT sum(a) as sum_a FROM t1 GROUP BY b HAVING sum_a > 1");
     }
 
     @Test
