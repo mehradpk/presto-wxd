@@ -95,7 +95,9 @@ import org.apache.iceberg.PartitionSpecParser;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.avro.AvroSchemaUtil;
 import org.apache.iceberg.io.LocationProvider;
+import org.apache.iceberg.parquet.ParquetSchemaUtil;
 import org.apache.iceberg.types.Conversions;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
@@ -158,6 +160,7 @@ import static com.facebook.presto.iceberg.IcebergUtil.getLocationProvider;
 import static com.facebook.presto.iceberg.IcebergUtil.getShallowWrappedIcebergTable;
 import static com.facebook.presto.iceberg.TypeConverter.ORC_ICEBERG_ID_KEY;
 import static com.facebook.presto.iceberg.TypeConverter.toHiveType;
+import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.facebook.presto.iceberg.delete.EqualityDeleteFilter.readEqualityDeletes;
 import static com.facebook.presto.iceberg.delete.PositionDeleteFilter.readPositionDeletes;
 import static com.facebook.presto.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
@@ -256,7 +259,8 @@ public class IcebergPageSourceProvider
             List<IcebergColumnHandle> regularColumns,
             TupleDomain<IcebergColumnHandle> effectivePredicate,
             FileFormatDataSourceStats fileFormatDataSourceStats,
-            ParquetMetadataSource parquetMetadataSource)
+            ParquetMetadataSource parquetMetadataSource,
+            TypeManager typeManager)
     {
         AggregatedMemoryContext systemMemoryContext = newSimpleAggregatedMemoryContext();
 
@@ -366,8 +370,10 @@ public class IcebergPageSourceProvider
                 if (column.getColumnType() == IcebergColumnHandle.ColumnType.SYNTHESIZED &&
                         !column.isUpdateRowIdColumn() && !column.isMergeTargetTableRowIdColumn()) {
                     Subfield pushedDownSubfield = getPushedDownSubfield(column);
-                    List<String> nestedColumnPath = nestedColumnPath(pushedDownSubfield);
-                    Optional<ColumnIO> columnIO = findNestedColumnIO(lookupColumnByName(messageColumnIO, pushedDownSubfield.getRootName()), nestedColumnPath);
+                    List<String> nestedColumnPath = nestedColumnPath(pushedDownSubfield).stream()
+                            .map(AvroSchemaUtil::makeCompatibleName)
+                            .collect(Collectors.toList());
+                    Optional<ColumnIO> columnIO = findNestedColumnIO(lookupColumnByName(messageColumnIO, AvroSchemaUtil.makeCompatibleName(pushedDownSubfield.getRootName())), nestedColumnPath);
                     if (columnIO.isPresent()) {
                         internalFields.add(constructField(prestoType, columnIO.get()));
                     }
@@ -385,7 +391,13 @@ public class IcebergPageSourceProvider
                                 .ifPresent(value -> defaultValues.put(column.getId(), value));
                     }
                     else {
-                        internalFields.add(constructField(column.getType(), messageColumnIO.getChild(parquetField.get().getName())));
+                        Type type = column.getType();
+                        if (!parquetField.get().isPrimitive()) {
+                            MessageType parquetMessageType = new MessageType("", parquetField.get());
+                            Schema icebergSchema = ParquetSchemaUtil.convert(parquetMessageType);
+                            type = toPrestoType(icebergSchema.columns().get(0).type(), typeManager);
+                        }
+                        internalFields.add(constructField(type, lookupColumnByName(messageColumnIO, AvroSchemaUtil.makeCompatibleName(parquetField.get().getName()))));
                     }
                 }
                 if (column.isRowPositionColumn()) {
@@ -436,7 +448,10 @@ public class IcebergPageSourceProvider
     {
         if (isPushedDownSubfield(column)) {
             Subfield pushedDownSubfield = getPushedDownSubfield(column);
-            return getSubfieldType(messageType, pushedDownSubfield.getRootName(), nestedColumnPath(pushedDownSubfield));
+            List<String> encodedPath = nestedColumnPath(pushedDownSubfield).stream()
+                    .map(AvroSchemaUtil::makeCompatibleName)
+                    .collect(Collectors.toList());
+            return getSubfieldType(messageType, AvroSchemaUtil.makeCompatibleName(pushedDownSubfield.getRootName()), encodedPath);
         }
 
         if (parquetIdToField.isEmpty()) {
@@ -1116,7 +1131,8 @@ public class IcebergPageSourceProvider
                         dataColumns,
                         predicate,
                         fileFormatDataSourceStats,
-                        parquetMetadataSource);
+                        parquetMetadataSource,
+                        typeManager);
             case ORC:
                 OrcReaderOptions readerOptions = OrcReaderOptions.builder()
                         .withMaxMergeDistance(getOrcMaxMergeDistance(session))
