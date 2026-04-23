@@ -24,6 +24,7 @@ import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.InMemoryRecordSet;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordCursor;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.SystemTable;
@@ -53,9 +54,14 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.facebook.presto.common.type.BigintType.BIGINT;
+import static com.facebook.presto.iceberg.IcebergErrorCode.ICEBERG_INCOMPATIBLE_VERSION;
+import static com.facebook.presto.iceberg.IcebergErrorCode.ICEBERG_INVALID_METADATA;
+import static com.facebook.presto.iceberg.IcebergUtil.MAX_FORMAT_VERSION_FOR_METADATA_TABLES;
 import static com.facebook.presto.iceberg.IcebergUtil.getIdentityPartitions;
+import static com.facebook.presto.iceberg.IcebergUtil.isAvroException;
 import static com.facebook.presto.iceberg.TypeConverter.toPrestoType;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MICROSECONDS;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -170,6 +176,13 @@ public class PartitionTable
 
     private Map<StructLikeWrapper, Partition> getPartitions(TableScan tableScan)
     {
+        int formatVersion = ((org.apache.iceberg.BaseTable) icebergTable).operations().current().formatVersion();
+        if (formatVersion > MAX_FORMAT_VERSION_FOR_METADATA_TABLES) {
+            throw new PrestoException(ICEBERG_INCOMPATIBLE_VERSION,
+                    format("Cannot read Iceberg manifest files for table format version %d (max supported: %d). Upgrade Presto to read this table.",
+                            formatVersion, MAX_FORMAT_VERSION_FOR_METADATA_TABLES));
+        }
+
         try (CloseableIterable<FileScanTask> fileScanTasks = tableScan.planFiles()) {
             Map<StructLikeWrapper, Partition> partitions = new HashMap<>();
 
@@ -207,6 +220,14 @@ public class PartitionTable
         }
         catch (IOException e) {
             throw new UncheckedIOException(e);
+        }
+        catch (RuntimeException e) {
+            // Catch Avro-specific exceptions that may occur during manifest deserialization
+            if (isAvroException(e)) {
+                throw new PrestoException(ICEBERG_INVALID_METADATA,
+                        "Cannot read manifest files. Manifests may be written by a newer Iceberg version.", e);
+            }
+            throw e;
         }
     }
 

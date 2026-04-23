@@ -42,6 +42,7 @@ import static com.facebook.presto.iceberg.CatalogType.HADOOP;
 import static com.facebook.presto.iceberg.FileFormat.PARQUET;
 import static com.facebook.presto.iceberg.IcebergQueryRunner.ICEBERG_CATALOG;
 import static com.facebook.presto.iceberg.IcebergQueryRunner.getIcebergDataDirectoryPath;
+import static com.facebook.presto.iceberg.IcebergUtil.MAX_FORMAT_VERSION_FOR_METADATA_TABLES;
 import static java.lang.String.format;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.testng.Assert.assertEquals;
@@ -274,6 +275,34 @@ public class TestIcebergV3
 
             assertQuery("SELECT * FROM " + tableName + " ORDER BY id",
                     "VALUES (1, 'A', 100.0), (2, 'B', 200.0), (3, 'A', 150.0), (4, 'C', 300.0)");
+        }
+        finally {
+            dropTable(tableName);
+        }
+    }
+
+    @Test
+    public void testMetadataTablesThrowOnUnsupportedFormatVersion()
+    {
+        // Tests unsupported format versions throw clear errors instead of silent data loss
+        int unsupportedVersion = MAX_FORMAT_VERSION_FOR_METADATA_TABLES + 1;
+        String tableName = "test_unsupported_version_table";
+        try {
+            assertUpdate("CREATE TABLE " + tableName
+                    + " (id INTEGER, category VARCHAR, value DOUBLE) WITH (\"format-version\" = '3')");
+            assertUpdate("INSERT INTO " + tableName + " VALUES (1, 'A', 100.0)", 1);
+            assertUpdate("INSERT INTO " + tableName + " VALUES (2, 'B', 200.0)", 1);
+            Table table = loadTable(tableName);
+            table.updateProperties().set("format-version", String.valueOf(unsupportedVersion)).commit();
+            assertQueryFails("SELECT * FROM \"" + tableName + "$files\"",
+                    format("Cannot read Iceberg manifest files for table format version %s \\(max supported: %s\\).*",
+                            unsupportedVersion, MAX_FORMAT_VERSION_FOR_METADATA_TABLES));
+            assertQueryFails("SELECT * FROM \"" + tableName + "$partitions\"",
+                    format("Cannot read Iceberg manifest files for table format version %s \\(max supported: %s\\).*",
+                            unsupportedVersion, MAX_FORMAT_VERSION_FOR_METADATA_TABLES));
+            assertQueryFails("SELECT * FROM \"" + tableName + "$manifests\"",
+                    format("Cannot read Iceberg manifest files for table format version %s \\(max supported: %s\\).*",
+                            unsupportedVersion, MAX_FORMAT_VERSION_FOR_METADATA_TABLES));
         }
         finally {
             dropTable(tableName);

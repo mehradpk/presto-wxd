@@ -239,6 +239,7 @@ public final class IcebergUtil
     public static final int MIN_FORMAT_VERSION_FOR_DELETE = 2;
     public static final int MAX_FORMAT_VERSION_FOR_ROW_LEVEL_OPERATIONS = 2;
     public static final int MIN_FORMAT_VERSION_FOR_ROW_LINEAGE = 3;
+    public static final int MAX_FORMAT_VERSION_FOR_METADATA_TABLES = 3;
     public static final int MAX_SUPPORTED_FORMAT_VERSION = 3;
 
     public static final long DOUBLE_POSITIVE_ZERO = 0x0000000000000000L;
@@ -1517,6 +1518,23 @@ public final class IcebergUtil
         return Long.parseLong(table.properties()
                 .getOrDefault(SPLIT_SIZE,
                         String.valueOf(SPLIT_SIZE_DEFAULT)));
+    }
+
+    /**
+     * Checks if throwable or any cause is an Avro exception (manifest version incompatibility).
+     */
+    public static boolean isAvroException(Throwable t)
+    {
+        if (t == null) {
+            return false;
+        }
+        // Check if this exception is from Avro package
+        Package exceptionPackage = t.getClass().getPackage();
+        if (exceptionPackage != null && exceptionPackage.getName().startsWith("org.apache.avro")) {
+            return true;
+        }
+        // Recursively check the full cause chain
+        return t != t.getCause() && isAvroException(t.getCause());
     }
 
     public static DataSize getTargetSplitSize(long sessionValueProperty, long icebergScanTargetSplitSize)
