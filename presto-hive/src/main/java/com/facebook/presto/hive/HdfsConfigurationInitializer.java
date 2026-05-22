@@ -108,6 +108,11 @@ public class HdfsConfigurationInitializer
     {
         copy(resourcesConfiguration, config);
 
+        // Configure LocalFileSystem instead of RawLocalFileSystem for Hudi 1.1.0 compatibility
+        // Hudi 1.1.0 requires getScheme() which is not implemented in RawLocalFileSystem
+        config.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
+        config.set("fs.file.impl.disable.cache", "true");
+
         // this is to prevent dfs client from doing reverse DNS lookups to determine whether nodes are rack local
         config.setClass(NET_TOPOLOGY_NODE_SWITCH_MAPPING_IMPL_KEY, NoOpDNSToSwitchMapping.class, DNSToSwitchMapping.class);
 

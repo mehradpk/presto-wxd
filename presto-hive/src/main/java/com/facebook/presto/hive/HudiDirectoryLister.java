@@ -152,7 +152,7 @@ public class HudiDirectoryLister
             if (fileStatuses.isPresent()) {
                 List<StoragePathInfo> pathInfos = Arrays.stream(fileStatuses.get())
                         .map(fs -> new StoragePathInfo(new StoragePath(fs.getPath().toString()), fs.getLen(), fs.isDirectory(),
-                                (short) 0, fs.getBlockSize(), fs.getModificationTime()))
+                                fs.getReplication(), fs.getBlockSize(), fs.getModificationTime()))
                         .collect(Collectors.toList());
                 fileSystemView.addFilesToView(pathInfos);
                 this.hoodieBaseFileIterator = fileSystemView.fetchLatestBaseFiles(partition).iterator();
@@ -162,7 +162,11 @@ public class HudiDirectoryLister
                     Stream<FileSlice> fileSlices = MERGE_ON_READ.equals(tableType) ?
                             fileSystemView.getLatestMergedFileSlicesBeforeOrOn(partition, latestInstant) :
                             fileSystemView.getLatestFileSlicesBeforeOrOn(partition, latestInstant, false);
-                    this.hoodieBaseFileIterator = fileSlices.map(FileSlice::getBaseFile).filter(Option::isPresent).map(Option::get).iterator();
+                    this.hoodieBaseFileIterator = fileSlices
+                            .map(FileSlice::getBaseFile)
+                            .filter(Option::isPresent)
+                            .map(Option::get)
+                            .iterator();
                 }
                 else {
                     this.hoodieBaseFileIterator = fileSystemView.getLatestBaseFiles(partition).iterator();
