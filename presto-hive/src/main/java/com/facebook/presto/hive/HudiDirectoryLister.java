@@ -83,8 +83,12 @@ public class HudiDirectoryLister
         if (actualConfig instanceof CopyOnFirstWriteConfiguration) {
             actualConfig = ((CopyOnFirstWriteConfiguration) actualConfig).getConfig();
         }
+
+        // Create a Hudi-specific configuration to avoid polluting the global Hadoop config
+        Configuration hudiConfig = createHudiConfiguration(actualConfig);
+
         this.metaClient = HoodieTableMetaClient.builder()
-                .setConf(new HadoopStorageConfiguration(actualConfig))
+                .setConf(new HadoopStorageConfiguration(hudiConfig))
                 .setBasePath(table.getStorage().getLocation())
                 .build();
         this.latestInstant = metaClient.getActiveTimeline()
@@ -97,11 +101,32 @@ public class HudiDirectoryLister
                         .filterCompletedInstants()
                         .lastInstant()
                         .map(HoodieInstant::requestedTime).orElseThrow(() -> new RuntimeException("No active instant found")));
-        HoodieEngineContext engineContext = new HoodieLocalEngineContext(new HadoopStorageConfiguration(actualConfig));
+        HoodieEngineContext engineContext = new HoodieLocalEngineContext(new HadoopStorageConfiguration(hudiConfig));
         HoodieMetadataConfig metadataConfig = HoodieMetadataConfig.newBuilder()
                 .enable(metadataEnabled)
                 .build();
         this.fileSystemView = FileSystemViewManager.createInMemoryFileSystemView(engineContext, metaClient, metadataConfig);
+    }
+
+    /**
+     * Creates a Hudi-specific Hadoop configuration with LocalFileSystem instead of RawLocalFileSystem.
+     * This is required for Hudi 1.1.0 compatibility, as it calls getScheme() which is not implemented
+     * in RawLocalFileSystem but is properly implemented in LocalFileSystem.
+     *
+     * @param baseConfig The base Hadoop configuration to copy from
+     * @return A new Configuration instance with Hudi-specific settings
+     */
+    private static Configuration createHudiConfiguration(Configuration baseConfig)
+    {
+        // Create a copy to avoid polluting the global configuration
+        Configuration hudiConfig = new Configuration(baseConfig);
+
+        // Configure LocalFileSystem instead of RawLocalFileSystem for Hudi 1.1.0 compatibility
+        // Hudi 1.1.0's HadoopFSUtils.isGCSFileSystem() calls getScheme() which RawLocalFileSystem doesn't implement
+        hudiConfig.set("fs.file.impl", org.apache.hadoop.fs.LocalFileSystem.class.getName());
+        hudiConfig.set("fs.file.impl.disable.cache", "true");
+
+        return hudiConfig;
     }
 
     public HoodieTableMetaClient getMetaClient()
