@@ -453,7 +453,10 @@ public final class HiveUtil
 
     static boolean isHudiParquetInputFormat(InputFormat<?, ?> inputFormat)
     {
-        return inputFormat instanceof HoodieParquetInputFormat;
+        // HoodieParquetRealtimeInputFormat extends HoodieParquetInputFormat in Hudi 1.1.0+
+        // but should not use HudiDirectoryLister (uses normal split generation instead)
+        return inputFormat instanceof HoodieParquetInputFormat
+                && !(inputFormat instanceof HoodieParquetRealtimeInputFormat);
     }
 
     private static boolean shouldUseFileSplitsForHudi(InputFormat<?, ?> inputFormat, HoodieTableMetaClient metaClient)
